@@ -1,3 +1,4 @@
+// server.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,42 +6,34 @@
 #include <arpa/inet.h>
 #include <time.h>
 
-#define PORT 12345
+#define PORT 8080
 #define BUF_SIZE 1024
 
 int main() {
     int sockfd;
     struct sockaddr_in servaddr, cliaddr;
     char buffer[BUF_SIZE];
-    socklen_t len;
+    socklen_t len = sizeof(cliaddr);
     int expected_seq = 0;
 
-    // Seed random for packet loss simulation
     srand(time(NULL));
-
-    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
         perror("socket creation failed");
-        exit(EXIT_FAILURE);
+        exit(1);
     }
-
     memset(&servaddr, 0, sizeof(servaddr));
-    memset(&cliaddr, 0, sizeof(cliaddr));
-
-    servaddr.sin_family = AF_INET; // IPv4
+    servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = INADDR_ANY;
     servaddr.sin_port = htons(PORT);
-
     if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
         perror("bind failed");
         close(sockfd);
-        exit(EXIT_FAILURE);
+        exit(1);
     }
-
-    printf("Receiver is ready and waiting...\n");
-
+    printf("Stop-and-Wait Receiver started...\n");
     while (1) {
-        len = sizeof(cliaddr);
-        int n = recvfrom(sockfd, (char *)buffer, BUF_SIZE, 0, ( struct sockaddr *) &cliaddr, &len);
+        int n = recvfrom(sockfd, buffer, BUF_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
         if (n < 0) {
             perror("recvfrom error");
             continue;
@@ -52,27 +45,22 @@ int main() {
             printf("Packet lost (simulated).\n");
             continue;
         }
-
-        // Parse received message: format "seq|message"
         int seq_num;
-        char msg[BUF_SIZE];
-        sscanf(buffer, "%d|%[^\n]", &seq_num, msg);
+        sscanf(buffer, "%d|%s", &seq_num, buffer);
 
         if (seq_num == expected_seq) {
-            printf("Received packet with seq %d: %s\n", seq_num, msg);
-            char ack_msg[10];
-            sprintf(ack_msg, "ACK%d", seq_num);
-            sendto(sockfd, ack_msg, strlen(ack_msg), 0, (const struct sockaddr *) &cliaddr, len);
-            expected_seq = 1 - expected_seq;  // toggle seq number
+            printf("Received packet seq %d: %s\n", seq_num, buffer);
+            char ack[20];
+            snprintf(ack, sizeof(ack), "ACK%d", seq_num);
+            sendto(sockfd, ack, strlen(ack), 0, (struct sockaddr *)&cliaddr, len);
+            expected_seq = 1 - expected_seq; // toggle between 0 and 1
         } else {
-            printf("Duplicate packet with seq %d received.\n", seq_num);
-            // Resend ACK for last received correct seq
-            char ack_msg[10];
-            sprintf(ack_msg, "ACK%d", 1 - expected_seq);
-            sendto(sockfd, ack_msg, strlen(ack_msg), 0, (const struct sockaddr *) &cliaddr, len);
+            // Resend last ACK
+            char ack[20];
+            snprintf(ack, sizeof(ack), "ACK%d", 1 - expected_seq);
+            sendto(sockfd, ack, strlen(ack), 0, (struct sockaddr *)&cliaddr, len);
         }
     }
-
     close(sockfd);
     return 0;
 }
